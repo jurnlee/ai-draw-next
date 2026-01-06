@@ -10,6 +10,14 @@ An AI-powered diagram creation platform. Describe your diagram in natural langua
 
 Built on Cloudflare Pages with React frontend and Pages Functions backend.
 
+## screenshots
+
+
+![main](./public/ScreenShot_main.png)
+![project](./public/ScreenShot_project.png)
+![setting_llm](./public/ScreenShot_setting_llm.png)
+![setting_prompt](./public/ScreenShot_setting_prompt.png)
+
 
 ## Key Highlights
 
