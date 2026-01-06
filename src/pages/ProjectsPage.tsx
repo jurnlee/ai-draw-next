@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Plus, Trash2, Sparkles, Pencil, Upload } from 'lucide-react'
+import { Plus, Trash2, Sparkles, Pencil, Upload, CheckSquare, Square, X } from 'lucide-react'
 import {
   Button,
   Input,
@@ -37,6 +37,12 @@ export function ProjectsPage() {
   const [renameTarget, setRenameTarget] = useState<Project | null>(null)
   const [newTitle, setNewTitle] = useState('')
   const [isRenaming, setIsRenaming] = useState(false)
+
+  // Batch selection state
+  const [isBatchMode, setIsBatchMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false)
 
   // Load projects
   useEffect(() => {
@@ -100,6 +106,49 @@ export function ProjectsPage() {
     setNewTitle(project.title)
   }
 
+  // Batch selection functions
+  const toggleBatchMode = () => {
+    setIsBatchMode(!isBatchMode)
+    setSelectedIds(new Set())
+  }
+
+  const toggleSelectProject = (projectId: string) => {
+    const newSelected = new Set(selectedIds)
+    if (newSelected.has(projectId)) {
+      newSelected.delete(projectId)
+    } else {
+      newSelected.add(projectId)
+    }
+    setSelectedIds(newSelected)
+  }
+
+  const selectAll = () => {
+    if (selectedIds.size === projects.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(projects.map(p => p.id)))
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return
+
+    setIsBatchDeleting(true)
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map(id => ProjectRepository.delete(id))
+      )
+      setSelectedIds(new Set())
+      setIsBatchMode(false)
+      setIsBatchDeleteDialogOpen(false)
+      loadProjects()
+    } catch (error) {
+      console.error('Failed to delete projects:', error)
+    } finally {
+      setIsBatchDeleting(false)
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-background">
       {/* Floating Sidebar Navigation */}
@@ -115,25 +164,81 @@ export function ProjectsPage() {
           <div className="mx-auto max-w-7xl">
             {/* Page Title & Actions */}
             <div className="mb-8 flex items-center justify-between">
-              <div>
+              <div className="flex items-center gap-4">
                 <h1 className="text-2xl font-bold text-primary">项目列表</h1>
+                {isBatchMode && (
+                  <span className="text-sm text-muted">
+                    已选择 {selectedIds.size} 个项目
+                  </span>
+                )}
               </div>
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setIsImportDialogOpen(true)}
-                  className="rounded-full px-6"
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  导入项目
-                </Button>
-                <Button
-                  onClick={() => setIsCreateDialogOpen(true)}
-                  className="rounded-full bg-primary px-6 text-surface hover:bg-primary/90"
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  新建项目
-                </Button>
+                {isBatchMode ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={selectAll}
+                      className="rounded-full px-4"
+                    >
+                      {selectedIds.size === projects.length ? (
+                        <>
+                          <Square className="mr-2 h-4 w-4" />
+                          取消全选
+                        </>
+                      ) : (
+                        <>
+                          <CheckSquare className="mr-2 h-4 w-4" />
+                          全选
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsBatchDeleteDialogOpen(true)}
+                      disabled={selectedIds.size === 0}
+                      className="rounded-full px-4 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      删除 ({selectedIds.size})
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={toggleBatchMode}
+                      className="rounded-full px-4"
+                    >
+                      <X className="mr-2 h-4 w-4" />
+                      退出
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {projects.length > 0 && (
+                      <Button
+                        variant="outline"
+                        onClick={toggleBatchMode}
+                        className="rounded-full px-4"
+                      >
+                        <CheckSquare className="mr-2 h-4 w-4" />
+                        批量管理
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsImportDialogOpen(true)}
+                      className="rounded-full px-6"
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      导入项目
+                    </Button>
+                    <Button
+                      onClick={() => setIsCreateDialogOpen(true)}
+                      className="rounded-full bg-primary px-6 text-surface hover:bg-primary/90"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      新建项目
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -166,73 +271,103 @@ export function ProjectsPage() {
                 </button>
 
                 {/* Project Cards */}
-                {projects.map((project) => (
-                  <div
-                    key={project.id}
-                    className="group relative cursor-pointer overflow-hidden rounded-xl border border-border bg-surface transition-all hover:border-primary hover:shadow-md"
-                    onClick={() => navigate(`/editor/${project.id}`)}
-                  >
-                    {/* Action Buttons - 右上角 */}
-                    <div className="absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 bg-surface/80 backdrop-blur-sm hover:bg-surface"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openRenameDialog(project)
-                        }}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 bg-surface/80 text-red-600 backdrop-blur-sm hover:bg-surface hover:text-red-700"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteTarget(project)
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-
-                    {/* Thumbnail - 固定高度 */}
-                    <div className="flex h-32 items-center justify-center bg-background">
-                      {project.thumbnail ? (
-                        <img
-                          src={project.thumbnail}
-                          alt={project.title}
-                          className="h-full w-full object-contain"
-                        />
-                      ) : (
-                        <Sparkles className="h-8 w-8 text-muted" />
+                {projects.map((project) => {
+                  const isSelected = selectedIds.has(project.id)
+                  return (
+                    <div
+                      key={project.id}
+                      className={`group relative cursor-pointer overflow-hidden rounded-xl border bg-surface transition-all hover:shadow-md ${
+                        isBatchMode && isSelected
+                          ? 'border-primary ring-2 ring-primary/20'
+                          : 'border-border hover:border-primary'
+                      }`}
+                      onClick={() => {
+                        if (isBatchMode) {
+                          toggleSelectProject(project.id)
+                        } else {
+                          navigate(`/editor/${project.id}`)
+                        }
+                      }}
+                    >
+                      {/* Batch Mode Checkbox */}
+                      {isBatchMode && (
+                        <div className="absolute left-2 top-2 z-10">
+                          <div
+                            className={`flex h-6 w-6 items-center justify-center rounded-md border-2 transition-colors ${
+                              isSelected
+                                ? 'border-primary bg-primary text-white'
+                                : 'border-border bg-surface/90 backdrop-blur-sm'
+                            }`}
+                          >
+                            {isSelected && <CheckSquare className="h-4 w-4" />}
+                          </div>
+                        </div>
                       )}
-                    </div>
 
-                    {/* Info */}
-                    <div className="p-3">
-                      <div className="flex items-center gap-2">
-                        <h3 className="truncate text-sm font-medium text-primary">
-                          {project.title}
-                        </h3>
-                        <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-                          project.engineType === 'excalidraw'
-                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                            : project.engineType === 'drawio'
-                              ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
-                              : 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300'
-                        }`}>
-                          {project.engineType.toUpperCase()}
-                        </span>
+                      {/* Action Buttons - 右上角 (hidden in batch mode) */}
+                      {!isBatchMode && (
+                        <div className="absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 bg-surface/80 backdrop-blur-sm hover:bg-surface"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openRenameDialog(project)
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 bg-surface/80 text-red-600 backdrop-blur-sm hover:bg-surface hover:text-red-700"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDeleteTarget(project)
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Thumbnail - 固定高度 */}
+                      <div className="flex h-32 items-center justify-center bg-background">
+                        {project.thumbnail ? (
+                          <img
+                            src={project.thumbnail}
+                            alt={project.title}
+                            className="h-full w-full object-contain"
+                          />
+                        ) : (
+                          <Sparkles className="h-8 w-8 text-muted" />
+                        )}
                       </div>
-                      <p className="text-xs text-muted">
-                        更新于 {formatDate(project.updatedAt)}
-                      </p>
+
+                      {/* Info */}
+                      <div className="p-3">
+                        <div className="flex items-center gap-2">
+                          <h3 className="truncate text-sm font-medium text-primary">
+                            {project.title}
+                          </h3>
+                          <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                            project.engineType === 'excalidraw'
+                              ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                              : project.engineType === 'drawio'
+                                ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                                : 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300'
+                          }`}>
+                            {project.engineType.toUpperCase()}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted">
+                          更新于 {formatDate(project.updatedAt)}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
@@ -308,6 +443,34 @@ export function ProjectsPage() {
               className="rounded-full bg-red-600 text-surface hover:bg-red-700"
             >
               {isDeleting ? '删除中...' : '删除'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch Delete Confirmation Dialog */}
+      <Dialog open={isBatchDeleteDialogOpen} onOpenChange={setIsBatchDeleteDialogOpen}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>批量删除项目</DialogTitle>
+            <DialogDescription className='my-4'>
+              确定要删除选中的 {selectedIds.size} 个项目吗？此操作无法撤销。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsBatchDeleteDialogOpen(false)}
+              className="rounded-full"
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleBatchDelete}
+              disabled={isBatchDeleting}
+              className="rounded-full bg-red-600 text-surface hover:bg-red-700"
+            >
+              {isBatchDeleting ? '删除中...' : `删除 ${selectedIds.size} 个项目`}
             </Button>
           </DialogFooter>
         </DialogContent>
