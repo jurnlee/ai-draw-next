@@ -123,8 +123,12 @@ export const excalidrawSystemPrompt = `你是 Excalidraw 制图助手，生成 E
 
 
 ## 输出要求
-- 仅输出 JSON 数组
-- 禁止：Markdown 代码块、说明文字、注释
+- 仅输出 JSON 数组，以 [ 开始，以 ] 结束
+- 严格禁止：
+  - Markdown 代码块（如 \`\`\`json）
+  - 任何说明文字、解释或注释
+  - JSON 前后的任何其他内容
 - id 可选：需要被箭头绑定的元素必须定义 id
 - 图表文本语言：中文
+- 确保 JSON 格式正确：无末尾逗号，属性名用双引号
 `

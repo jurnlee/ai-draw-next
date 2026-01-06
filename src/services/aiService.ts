@@ -89,21 +89,33 @@ function parseSSELine(line: string): string | null {
   }
 
   if (data === '[DONE]') return null
+  if (!data.trim()) return null
 
   try {
     const parsed = JSON.parse(data)
-    // Handle OpenAI format
-    if (parsed.choices?.[0]?.delta?.content) {
+    
+    // Handle OpenAI format: { choices: [{ delta: { content: "..." } }] }
+    if (parsed.choices?.[0]?.delta?.content !== undefined) {
       return parsed.choices[0].delta.content
     }
-    // Handle simple format
-    if (parsed.content) {
+    
+    // Handle simple format from our backend: { content: "..." }
+    if (parsed.content !== undefined) {
       return parsed.content
     }
+    
     // Handle text field
-    if (parsed.text) {
+    if (parsed.text !== undefined) {
       return parsed.text
     }
+    
+    // Handle Anthropic format: { type: "content_block_delta", delta: { text: "..." } }
+    if (parsed.type === 'content_block_delta' && parsed.delta?.text !== undefined) {
+      return parsed.delta.text
+    }
+    
+    // 如果解析成功但没有找到内容字段，返回 null
+    return null
   } catch {
     // Not JSON, return raw data if it has content
     if (data.trim()) {
@@ -113,10 +125,23 @@ function parseSSELine(line: string): string | null {
   return null
 }
 
+// 当前活跃的 AbortController
+let currentAbortController: AbortController | null = null
+
 /**
  * AI Service for communicating with the backend
  */
 export const aiService = {
+  /**
+   * 中止当前正在进行的请求
+   */
+  abort(): void {
+    if (currentAbortController) {
+      currentAbortController.abort()
+      currentAbortController = null
+    }
+  },
+
   /**
    * Send chat messages to AI and get response (non-streaming)
    */
@@ -154,14 +179,25 @@ export const aiService = {
   ): Promise<string> {
     ensureQuotaAvailable()
 
+    // 创建新的 AbortController
+    currentAbortController = new AbortController()
+    const { signal } = currentAbortController
+
+    console.log('[streamChat] Sending request to:', `${API_BASE_URL}/chat`)
+    
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(buildRequestBody(messages, true)),
+      signal,
     })
+
+    console.log('[streamChat] Response status:', response.status, response.statusText)
+    console.log('[streamChat] Response headers:', Object.fromEntries(response.headers.entries()))
 
     if (!response.ok) {
       const error = await response.text()
+      console.error('[streamChat] Request failed:', error)
       throw new Error(`AI request failed: ${error}`)
     }
 
@@ -170,19 +206,32 @@ export const aiService = {
 
     const reader = response.body?.getReader()
     if (!reader) {
+      console.error('[streamChat] No response body reader available')
       throw new Error('Failed to get response reader')
     }
 
     const decoder = new TextDecoder()
     let fullContent = ''
     let buffer = ''
+    let rawResponse = '' // 保存原始响应用于调试
 
+    let chunkCount = 0
     try {
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          console.log('[streamChat] Stream done, total chunks received:', chunkCount)
+          break
+        }
 
-        buffer += decoder.decode(value, { stream: true })
+        chunkCount++
+        const chunk = decoder.decode(value, { stream: true })
+        buffer += chunk
+        rawResponse += chunk
+        
+        if (chunkCount <= 3) {
+          console.log(`[streamChat] Chunk ${chunkCount}:`, chunk.substring(0, 200))
+        }
 
         // Process complete lines
         const lines = buffer.split('\n')
@@ -208,8 +257,51 @@ export const aiService = {
           onChunk(content, fullContent)
         }
       }
+
+      // 如果流式响应为空，尝试解析原始响应作为非流式 JSON
+      if (!fullContent && rawResponse.trim()) {
+        console.warn('[streamChat] Stream response empty, attempting to parse as JSON:', rawResponse.substring(0, 500))
+        try {
+          const jsonResponse = JSON.parse(rawResponse)
+          // 尝试各种可能的响应格式
+          const extractedContent = 
+            jsonResponse.content ||
+            jsonResponse.message ||
+            jsonResponse.choices?.[0]?.message?.content ||
+            jsonResponse.choices?.[0]?.text ||
+            (typeof jsonResponse === 'string' ? jsonResponse : null)
+          
+          if (extractedContent) {
+            fullContent = extractedContent
+            onChunk(fullContent, fullContent)
+          }
+        } catch {
+          console.error('[streamChat] Failed to parse raw response as JSON, rawResponse:', rawResponse)
+        }
+      }
     } finally {
       reader.releaseLock()
+      currentAbortController = null
+    }
+
+    // 如果流式响应完全为空（0 chunks），尝试使用非流式请求作为回退
+    if (!fullContent && chunkCount === 0) {
+      console.warn('[streamChat] Stream returned 0 chunks, falling back to non-streaming request')
+      try {
+        const fallbackContent = await this.chat(messages)
+        if (fallbackContent) {
+          onChunk(fallbackContent, fallbackContent)
+          onComplete?.(fallbackContent)
+          return fallbackContent
+        }
+      } catch (fallbackError) {
+        console.error('[streamChat] Fallback non-streaming request also failed:', fallbackError)
+      }
+    }
+
+    // 如果仍然为空，打印调试信息
+    if (!fullContent) {
+      console.error('[streamChat] Stream chat returned empty content. Raw response:', rawResponse.substring(0, 1000))
     }
 
     onComplete?.(fullContent)

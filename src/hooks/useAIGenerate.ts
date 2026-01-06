@@ -1,10 +1,11 @@
+import { useRef } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { usePayloadStore } from '@/stores/payloadStore'
 import { VersionRepository } from '@/services/versionRepository'
 import { ProjectRepository } from '@/services/projectRepository'
 import {
-  SYSTEM_PROMPTS,
+  getSystemPrompt,
   buildInitialPrompt,
   buildEditPrompt,
   extractCode,
@@ -99,6 +100,9 @@ export function useAIGenerate() {
 
   const { setMessages } = usePayloadStore()
   const { success, error: showError } = useToast()
+  
+  // 防止并发调用的 ref
+  const isGeneratingRef = useRef(false)
 
   /**
    * Generate diagram using AI with streaming support
@@ -112,9 +116,16 @@ export function useAIGenerate() {
     attachments?: Attachment[]
   ) => {
     if (!currentProject) return
+    
+    // 防止重复调用
+    if (isGeneratingRef.current) {
+      console.warn('AI generation already in progress, skipping duplicate call')
+      return
+    }
+    isGeneratingRef.current = true
 
     const engineType = currentProject.engineType
-    const systemPrompt = SYSTEM_PROMPTS[engineType]
+    const systemPrompt = getSystemPrompt(engineType)
 
     // Add user message to UI (with attachments)
     addMessage({
@@ -171,7 +182,7 @@ export function useAIGenerate() {
         )
       }
 
-      // Validate the generated content with auto-fix for Mermaid
+      // Validate the generated content with auto-fix
       console.log('finalCode', finalCode)
       let validatedCode = finalCode
       let validation = await validateContent(validatedCode, engineType)
@@ -179,6 +190,18 @@ export function useAIGenerate() {
       // Auto-fix mechanism for Mermaid engine
       if (!validation.valid && engineType === 'mermaid') {
         validatedCode = await attemptMermaidAutoFix(
+          validatedCode,
+          validation.error || 'Unknown error',
+          systemPrompt,
+          assistantMsgId
+        )
+        // Re-validate after fix attempts
+        validation = await validateContent(validatedCode, engineType)
+      }
+
+      // Auto-fix mechanism for Excalidraw engine
+      if (!validation.valid && engineType === 'excalidraw') {
+        validatedCode = await attemptExcalidrawAutoFix(
           validatedCode,
           validation.error || 'Unknown error',
           systemPrompt,
@@ -251,15 +274,27 @@ export function useAIGenerate() {
       success('Diagram generated successfully')
 
     } catch (error) {
-      console.error('AI generation failed:', error)
-      updateMessage(assistantMsgId, {
-        content: `Error: ${error instanceof Error ? error.message : 'Generation failed'}`,
-        status: 'error',
-      })
-      showError(error instanceof Error ? error.message : 'Generation failed')
+      // 检查是否是用户主动中止
+      const isAborted = error instanceof DOMException && error.name === 'AbortError'
+      
+      if (isAborted) {
+        console.log('AI generation aborted by user')
+        updateMessage(assistantMsgId, {
+          content: '已停止生成',
+          status: 'error',
+        })
+      } else {
+        console.error('AI generation failed:', error)
+        updateMessage(assistantMsgId, {
+          content: `Error: ${error instanceof Error ? error.message : 'Generation failed'}`,
+          status: 'error',
+        })
+        showError(error instanceof Error ? error.message : 'Generation failed')
+      }
     } finally {
       setStreaming(false)
       setLoading(false)
+      isGeneratingRef.current = false
     }
   }
 
@@ -277,7 +312,7 @@ export function useAIGenerate() {
     }
 
     const engineType = currentProject.engineType
-    const systemPrompt = SYSTEM_PROMPTS[engineType]
+    const systemPrompt = getSystemPrompt(engineType)
 
     const assistantMsgId =
       assistantMessageId ??
@@ -315,11 +350,22 @@ export function useAIGenerate() {
 
       let finalCode = extractCode(response, engineType)
 
-      // Validate the generated content with auto-fix for Mermaid
+      // Validate the generated content with auto-fix
       let validatedCode = finalCode
       let validation = await validateContent(validatedCode, engineType)
+      
       if (!validation.valid && engineType === 'mermaid') {
         validatedCode = await attemptMermaidAutoFix(
+          validatedCode,
+          validation.error || 'Unknown error',
+          systemPrompt,
+          assistantMsgId
+        )
+        validation = await validateContent(validatedCode, engineType)
+      }
+
+      if (!validation.valid && engineType === 'excalidraw') {
+        validatedCode = await attemptExcalidrawAutoFix(
           validatedCode,
           validation.error || 'Unknown error',
           systemPrompt,
@@ -378,12 +424,23 @@ export function useAIGenerate() {
       success('Diagram generated successfully')
 
     } catch (error) {
-      console.error('AI retry failed:', error)
-      updateMessage(assistantMsgId, {
-        content: `Error: ${error instanceof Error ? error.message : 'Retry failed'}`,
-        status: 'error',
-      })
-      showError(error instanceof Error ? error.message : 'Retry failed')
+      // 检查是否是用户主动中止
+      const isAborted = error instanceof DOMException && error.name === 'AbortError'
+      
+      if (isAborted) {
+        console.log('AI retry aborted by user')
+        updateMessage(assistantMsgId, {
+          content: '已停止生成',
+          status: 'error',
+        })
+      } else {
+        console.error('AI retry failed:', error)
+        updateMessage(assistantMsgId, {
+          content: `Error: ${error instanceof Error ? error.message : 'Retry failed'}`,
+          status: 'error',
+        })
+        showError(error instanceof Error ? error.message : 'Retry failed')
+      }
     } finally {
       setStreaming(false)
       setLoading(false)
@@ -616,5 +673,80 @@ export function useAIGenerate() {
     return currentCode
   }
 
-  return { generate, retryLast }
+  /**
+   * Attempt to auto-fix Excalidraw JSON errors by asking AI to fix them
+   */
+  const attemptExcalidrawAutoFix = async (
+    failedCode: string,
+    errorMessage: string,
+    systemPrompt: string,
+    assistantMsgId: string
+  ): Promise<string> => {
+    const MAX_EXCALIDRAW_FIX_ATTEMPTS = 2
+
+    let currentCode = failedCode
+    let currentError = errorMessage
+    let attempts = 0
+
+    while (attempts < MAX_EXCALIDRAW_FIX_ATTEMPTS) {
+      attempts++
+
+      updateMessage(assistantMsgId, {
+        content: `修复 JSON 格式 (尝试 ${attempts}/${MAX_EXCALIDRAW_FIX_ATTEMPTS})...\n错误: ${currentError}`,
+        status: 'streaming',
+      })
+
+      const fixPrompt = `请修复下面 Excalidraw JSON 中的错误，只返回修复后的 JSON 数组，不要任何其他内容。
+      报错："""${currentError}"""
+      当前代码："""${currentCode}"""`
+
+      const messages: PayloadMessage[] = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: fixPrompt },
+      ]
+
+      setMessages(messages)
+
+      let fixedCode: string
+      if (USE_STREAMING) {
+        const response = await aiService.streamChat(
+          messages,
+          (_chunk, accumulated) => {
+            updateMessage(assistantMsgId, {
+              content: `修复 JSON 格式 (尝试 ${attempts}/${MAX_EXCALIDRAW_FIX_ATTEMPTS})...\n\n${accumulated}`,
+            })
+          }
+        )
+        fixedCode = extractCode(response, 'excalidraw')
+      } else {
+        const response = await aiService.chat(messages)
+        fixedCode = extractCode(response, 'excalidraw')
+      }
+
+      // Validate the fixed code
+      const validation = await validateContent(fixedCode, 'excalidraw')
+      if (validation.valid) {
+        return fixedCode
+      }
+
+      // Update for next iteration
+      currentCode = fixedCode
+      currentError = validation.error || 'Unknown error'
+    }
+
+    // Return the last attempted code (will be validated again in caller)
+    return currentCode
+  }
+
+  /**
+   * 停止当前正在进行的 AI 生成
+   */
+  const stopGeneration = () => {
+    aiService.abort()
+    setStreaming(false)
+    setLoading(false)
+    isGeneratingRef.current = false
+  }
+
+  return { generate, retryLast, stopGeneration }
 }

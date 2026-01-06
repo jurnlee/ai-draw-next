@@ -42,7 +42,7 @@ export function EditorPage() {
   const { success } = useToast()
 
   const { currentProject, currentContent, hasUnsavedChanges, setProject, setContentFromVersion, markAsSaved, reset: resetEditor } = useEditorStore()
-  const { clearMessages } = useChatStore()
+  const { loadHistory } = useChatStore()
 
   useEffect(() => {
     localStorage.setItem('ai-draw-next.chatPanelCollapsed', String(isChatPanelCollapsed))
@@ -62,7 +62,8 @@ export function EditorPage() {
     setIsLoading(true)
     // Clear previous project data before loading new one
     resetEditor()
-    clearMessages()
+    // 加载该项目的聊天历史（会自动清除之前项目的消息）
+    loadHistory(id)
     try {
       const project = await ProjectRepository.getById(id)
       if (!project) {

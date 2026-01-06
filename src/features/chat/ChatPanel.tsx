@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, ImagePlus, FileText, User, Bot, X, MessageSquarePlus, Loader2, CheckCircle2, Link, MoveRight, Copy, RotateCcw, ChevronDown, ChevronRight, ArrowLeftToLine } from 'lucide-react'
+import { Send, ImagePlus, FileText, User, Bot, X, MessageSquarePlus, Loader2, CheckCircle2, Link, MoveRight, Copy, RotateCcw, ChevronDown, ChevronRight, ArrowLeftToLine, Square } from 'lucide-react'
 import { Button, Loading } from '@/components/ui'
 import { useChatStore } from '@/stores/chatStore'
 import { useEditorStore, selectIsEmpty } from '@/stores/editorStore'
@@ -31,13 +31,14 @@ export function ChatPanel({ onCollapse }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const hasHandledInitialPrompt = useRef(false)
+  const isSendingRef = useRef(false)
   const [openCodePanelByMessageId, setOpenCodePanelByMessageId] = useState<Record<string, boolean>>({})
   const assistantStatusRef = useRef<Record<string, string>>({})
   const codePanelContainerRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   const { messages, isStreaming, initialPrompt, initialAttachments, clearInitialPrompt, clearMessages } = useChatStore()
   const isCanvasEmpty = useEditorStore(selectIsEmpty)
-  const { generate, retryLast } = useAIGenerate()
+  const { generate, retryLast, stopGeneration } = useAIGenerate()
   const { error: showError, success: showSuccess } = useToast()
 
   // Auto-scroll to bottom
@@ -102,13 +103,20 @@ export function ChatPanel({ onCollapse }: ChatPanelProps) {
 
   // Handle initial prompt from Quick Start (Path A)
   useEffect(() => {
-    if (initialPrompt && !hasHandledInitialPrompt.current) {
-      hasHandledInitialPrompt.current = true
-      const attachmentsToSend = initialAttachments ?? undefined
-      clearInitialPrompt()
-      handleSend(initialPrompt, attachmentsToSend)
-    }
-  }, [initialPrompt, initialAttachments])
+    // 检查是否需要处理初始提示词
+    if (!initialPrompt || hasHandledInitialPrompt.current) return
+    
+    // 立即标记已处理，防止 React Strict Mode 重复执行
+    hasHandledInitialPrompt.current = true
+    
+    // 保存当前值（在清除状态之前）
+    const prompt = initialPrompt
+    const attachmentsToSend = initialAttachments ?? undefined
+    
+    // 先清除状态，再发送请求
+    clearInitialPrompt()
+    handleSend(prompt, attachmentsToSend)
+  }, [initialPrompt, initialAttachments, clearInitialPrompt])
 
   // Auto-resize textarea
   useEffect(() => {
@@ -234,10 +242,19 @@ export function ChatPanel({ onCollapse }: ChatPanelProps) {
     const message = text || inputValue.trim()
     if ((!message && attachments.length === 0 && !initialAtts?.length) || isStreaming) return
 
+    // 使用 ref 防止重复调用（解决 React Strict Mode 和快速点击问题）
+    if (isSendingRef.current) return
+    isSendingRef.current = true
+
     const currentAttachments = initialAtts ?? (attachments.length > 0 ? [...attachments] : undefined)
     setInputValue('')
     setAttachments([])
-    await generate(message, isCanvasEmpty, currentAttachments)
+    
+    try {
+      await generate(message, isCanvasEmpty, currentAttachments)
+    } finally {
+      isSendingRef.current = false
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -494,16 +511,27 @@ export function ChatPanel({ onCollapse }: ChatPanelProps) {
                   </div>
 
                   {msg.role === 'assistant' && msg.id === lastAssistantMessageId && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="重新发送"
-                      onClick={() => retryLast(msg.id)}
-                      disabled={isStreaming || msg.status === 'streaming' || msg.status === 'pending'}
-                      className="h-7 w-7"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                    </Button>
+                    msg.status === 'streaming' || msg.status === 'pending' ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="停止生成"
+                        onClick={stopGeneration}
+                        className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                      >
+                        <Square className="h-4 w-4 fill-current" />
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="重新发送"
+                        onClick={() => retryLast(msg.id)}
+                        className="h-7 w-7"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    )
                   )}
                 </div>
               </div>

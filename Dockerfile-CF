@@ -1,0 +1,49 @@
+# ===== 阶段1: 构建前端 =====
+FROM node:20-alpine AS builder
+
+# 安装 pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+# 复制依赖文件
+COPY package.json pnpm-lock.yaml ./
+
+# 安装依赖
+RUN pnpm install --frozen-lockfile
+
+# 复制源代码
+COPY . .
+
+# 构建前端
+RUN pnpm run build
+
+# ===== 阶段2: 生产环境 =====
+FROM node:20-alpine AS production
+
+# 安装 pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+# 复制 package.json 和 lock 文件
+COPY package.json pnpm-lock.yaml ./
+
+# 只安装生产依赖 + wrangler
+RUN pnpm install --frozen-lockfile
+
+# 复制构建产物
+COPY --from=builder /app/dist ./dist
+
+# 复制 functions 目录（后端 API）
+COPY functions ./functions
+
+# 复制配置文件
+COPY tsconfig.json ./
+COPY wrangler.toml* ./
+
+# 暴露端口
+EXPOSE 8787
+
+# 使用 wrangler pages dev 启动服务（托管静态文件 + functions）
+CMD ["pnpm", "exec", "wrangler", "pages", "dev", "dist", "--port", "8787", "--compatibility-date=2024-01-01"]
