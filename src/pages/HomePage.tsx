@@ -244,7 +244,7 @@ export function HomePage() {
                 <Sparkles className="h-6 w-6 text-surface" />
               </div> */}
               <h1 className="text-3xl font-bold text-primary">
-                AI Draw Nexus 
+                AI Draw Next 
               </h1>
             </div>
             <p className="text-muted">AI驱动的一站式绘图平台</p>

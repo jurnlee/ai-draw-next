@@ -7,7 +7,7 @@ export function AppHeader() {
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
           <Sparkles className="h-4 w-4 text-surface" />
         </div>
-        <span className="text-lg font-semibold text-primary">AI Draw Nexus</span>
+        <span className="text-lg font-semibold text-primary">AI Draw Next</span>
       </div>
 
       <div className="flex items-center gap-4">

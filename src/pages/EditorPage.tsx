@@ -30,7 +30,7 @@ export function EditorPage() {
   const navigate = useNavigate()
   const [isVersionPanelOpen, setIsVersionPanelOpen] = useState(false)
   const [isChatPanelCollapsed, setIsChatPanelCollapsed] = useState(() => {
-    return localStorage.getItem('ai-draw-nexus.chatPanelCollapsed') === 'true'
+    return localStorage.getItem('ai-draw-next.chatPanelCollapsed') === 'true'
   })
   const [isLoading, setIsLoading] = useState(true)
   const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -45,7 +45,7 @@ export function EditorPage() {
   const { clearMessages } = useChatStore()
 
   useEffect(() => {
-    localStorage.setItem('ai-draw-nexus.chatPanelCollapsed', String(isChatPanelCollapsed))
+    localStorage.setItem('ai-draw-next.chatPanelCollapsed', String(isChatPanelCollapsed))
   }, [isChatPanelCollapsed])
 
   // Load project on mount
